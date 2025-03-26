@@ -7,34 +7,6 @@ library(here)
 
 YAML_PATH <- "~/personal/Battletech/mek_project/mekhq/MekHQ/data/universe/planetary_systems/canon_systems"
 
-# Functions ---------------------------------------------------------------
-
-# I need a function to detect and replace faction strings that can take
-# account of the potential for multiple entries separated by commas
-
-detect_faction <- function(factions, pattern) {
-  factions |>
-    map_lgl(function(x) {
-      x |>
-        str_split_1(",") |>
-        str_trim() |>
-        str_detect(pattern) |>
-        any()
-    })
-}
-
-replace_faction <- function(factions, pattern, replacement) {
-  factions |>
-    map_chr(function(x) {
-      x |>
-        str_split_1(",") |>
-        str_trim() |>
-        str_replace(pattern, replacement) |>
-        str_flatten_comma()
-    })
-}
-
-
 # Read in data ------------------------------------------------------------
 
 # read in xml faction data directly from GitHub
