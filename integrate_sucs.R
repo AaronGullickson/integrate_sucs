@@ -7,6 +7,33 @@ library(here)
 
 YAML_PATH <- "~/personal/Battletech/mek_project/mekhq/MekHQ/data/universe/planetary_systems/canon_systems"
 
+# Functions ---------------------------------------------------------------
+
+# I need a function to detect and replace faction strings that can take
+# account of the potential for multiple entries separated by commas
+
+detect_faction <- function(factions, pattern) {
+  factions |>
+    map_lgl(function(x) {
+      x |>
+        str_split_1(",") |>
+        str_trim() |>
+        str_detect(pattern) |>
+        any()
+    })
+}
+
+replace_faction <- function(factions, pattern, replacement) {
+  factions |>
+    map_chr(function(x) {
+      x |>
+        str_split_1(",") |>
+        str_trim() |>
+        str_replace(pattern, replacement) |>
+        str_flatten_comma()
+    })
+}
+
 
 # Read in data ------------------------------------------------------------
 
@@ -61,31 +88,17 @@ sucs_data <- sucs_data |>
 # early as
 
 # crosswalk their faction codes to our faction codes
-# joining won't work here because of the cases where I have multiple factions
-# I need to loop through all cases in my crosswalk and apply a str_replace
-# TODO: deal with clan protectorate
-# TODO: I feel like this could be put in a function and then called via pmap
-# or something similar and would be faster and easier to extend
-for(i in 1:nrow(faction_crosswalk)) {
-  old_faction <- faction_crosswalk$sucs_faction[i]
-  new_faction <- faction_crosswalk$faction[i]
-  # first look for the whole string
-  sucs_data$faction <- str_replace(sucs_data$faction,
-                                   paste("^", old_faction, "$", sep = ""),
-                                   new_faction)
-  # now look for the word followed by comma
-  sucs_data$faction <- str_replace(sucs_data$faction,
-                                   paste("^", old_faction, ",", sep = ""),
-                                   paste(new_faction, ",", sep = ""))
-  # now look for the word at end with comma before
-  sucs_data$faction <- str_replace(sucs_data$faction,
-                                   paste(",", old_faction, "$", sep = ""),
-                                   paste(",", new_faction, sep = ""))
-  # now look for the word between commas
-  sucs_data$faction <- str_replace(sucs_data$faction,
-                                   paste(",", old_faction, ",", sep = ""),
-                                   paste(",", new_faction, ",", sep = ""))
-}
+# can't do this by join because of multiple faction issue, but I can
+# use str_replace_all with a named vector to do them all in one good
+faction_replacement <- faction_crosswalk$faction
+# if we set the names to equal the regex to match on we can make this work
+# we have to use look arounds to get boundaries that could be commas or
+# start/end of character string
+names(faction_replacement) <- paste("(?<=^|,)",
+                                    faction_crosswalk$sucs_faction,
+                                    "(?=,|$)",
+                                    sep = "")
+sucs_data$faction <- str_replace_all(sucs_data$faction, faction_replacement)
 
 current_factions <- sucs_data |>
   filter(!str_detect(faction, ",")) |>
@@ -147,6 +160,8 @@ planet_files <- list.files(YAML_PATH, pattern = "*.yml")
 faction_events <- map(planet_files, function(planet_file) {
   planet_data <- read_planetary_data(here(YAML_PATH, planet_file))
 
+  # TODO: need to also add this to non primary slots that have faction events
+  # but don't add events after an abandon code on non-primaries
   planet_faction <- planet_data$planetary_events[[planet_data$system$primarySlot]] |>
     filter(!is.na(faction)) |>
     select(date, faction, source_faction) |>
