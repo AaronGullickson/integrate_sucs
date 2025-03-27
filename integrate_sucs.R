@@ -105,6 +105,8 @@ sucs_data <- sucs_data |>
   bind_rows()
 
 # convert into the format of date, faction, source_faction
+# TODO: I think we need to take a close look at all sources and figure out the
+# best date of the map for each
 sucs_data <- sucs_data |>
   mutate(year = as.integer(str_remove(time_point, "\\D")),
          month = case_when(
