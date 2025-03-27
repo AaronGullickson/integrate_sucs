@@ -85,6 +85,10 @@ sum(is.na(sucs_data$faction))
 sucs_data <- sucs_data |>
   filter(!is.na(faction))
 
+
+
+# Clean up the SUCS data for our format -----------------------------------
+
 # group_split by sucsId and then map to remove all cases after the first that
 # are the same as the previous case, so that we only identify faction changes.
 # Then bind_rows
@@ -122,31 +126,70 @@ sucs_data <- sucs_data |>
   #remove data from 2571 and earlier because sketchy
   filter(year(date) > 2571)
 
-# load in planet data in a map, get the subset of sucs_data that matches
-# sucsId. Remove existing sucs codes from planetary event data and then
-# join in the new sucs codes. Save back to planetary events and write out file
+# Merge and write out new data --------------------------------------------
+
+update_from_sucs <- function(planet_file) {
+
+  # read in the data
+  planet_data <- read_planetary_data(here(YAML_PATH, planet_file))
+
+  # get corresponding SUCS data
+  planet_sucs <- sucs_data |>
+    filter(sucsId == planet_data$system$sucsId) |>
+    select(-sucsId)
+
+  # we assume faction changes are the same for all inhabited planets in the
+  # system
+  planet_data$planetary_events <- planet_data$planetary_events |>
+    map(function(planet_events) {
+      if(is.null(planet_events) | !("faction" %in% colnames(planet_events))) {
+        return(NULL)
+      }
+      # get just the faction events
+      planet_faction_events <- planet_events |>
+        filter(!is.na(faction)) |>
+        select(date, faction, source_faction) |>
+        # remove any existing sucs data
+        filter(is.na(source_faction) | source_faction != "sucs") |>
+        arrange(date)
+
+      # check for abandon date
+      n <- nrow(planet_faction_events)
+      founding_date <- min(planet_events$date)
+      abandon_date <- ifelse(planet_faction_events$faction[n] == "ABN",
+                             planet_faction_events$date[n],
+                             Inf)
+
+
+      # bind in the sucs data
+      planet_faction_events <- planet_sucs |>
+        # remove any dates before the founding or after final abandonment
+        # TODO: we should really make a note if this happens to primary
+        # as it suggests data discrepancies
+        filter(date > founding_date & date < abandon_date) |>
+        bind_rows(planet_faction_events) |>
+        arrange(date)
+
+      # now we can remove existing faction data from planet_events and merge
+      # in the updated version
+      planet_events <- planet_events |>
+        select(-faction, -source_faction) |>
+        filter(!if_all(!date, is.na))
+
+      planet_events <- planet_faction_events |>
+        full_join(planet_events, by = "date") |>
+        arrange(date)
+
+      return(planet_events)
+    })
+
+  write_planetary_data(planet_data, here(YAML_PATH, planet_file))
+
+  return(TRUE)
+}
 
 # TODO: ideally we read in from GitHub for most current
 planet_files <- list.files(YAML_PATH, pattern = "*.yml")
+results <- map_lgl(planet_files, possibly(update_from_sucs, FALSE))
 
-faction_events <- map(planet_files, function(planet_file) {
-  planet_data <- read_planetary_data(here(YAML_PATH, planet_file))
-
-  # TODO: need to also add this to non primary slots that have faction events
-  # but don't add events after an abandon code on non-primaries
-  planet_faction <- planet_data$planetary_events[[planet_data$system$primarySlot]] |>
-    filter(!is.na(faction)) |>
-    select(date, faction, source_faction) |>
-    # remove any existing sucs data
-    filter(is.na(source_faction) | source_faction != "sucs")
-
-  planet_sucs <- sucs_data |>
-    filter(sucsId == planet_data$system$sucsId) |>
-    filter(date >= min(planet_faction$date)) |>
-    select(-sucsId)
-
-  planet_faction <- planet_faction |>
-    bind_rows(planet_sucs) |>
-    arrange(date)
-
-}) |> bind_rows()
+sum(!results)
